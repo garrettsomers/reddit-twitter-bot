@@ -96,9 +96,9 @@ def tweet_creator(subreddit_info):
     # "limit" tells the API the maximum number of posts to look up
 
     indi = 0
-    AllSubs = subreddit_info.get_new(limit=200)
+    for submission in subreddit_info.get_new(limit=200):
         ## Insert a switch to accept post iif it has 5 or more upvotes.
-		num_votes = float(str(submission).rsplit('::')[0])
+        num_votes = float(str(submission).rsplit('::')[0])
         EnoughVotes = (num_votes >= 5.)
         if not EnoughVotes:
             print('[bot] Not enough upvotes yet for: {}'.format(str(submission)))
@@ -145,7 +145,7 @@ def tweet_creator(subreddit_info):
             post_ids.append(submission.id)
             break
         else:
-            print('[bot] Already tweeted: {}'.format(str(submission)))
+            print '[bot] Already tweeted: ID',submission.id, '    {}'.format(str(submission))
             continue
 
     return post_dict, post_ids
@@ -227,6 +227,7 @@ def log_tweet(post_id):
     ''' Takes note of when the reddit Twitter bot tweeted a post. '''
     with open(POSTED_CACHE, 'a') as out_file:
         out_file.write(str(post_id) + '\n')
+        print 'logging ID', str(post_id)
 
 
 def main():
