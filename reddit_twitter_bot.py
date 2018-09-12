@@ -24,17 +24,33 @@ import requests
 import tweepy
 import time
 import os
-import urllib.parse
+from PIL import Image
+
+## My python 2 doesn't have urllib, so use urlparse.urlsplit instead.
+#import urllib.parse
+from urlparse import urlsplit
 from glob import glob
 
-# Place your Twitter API keys here
-ACCESS_TOKEN = ''
-ACCESS_TOKEN_SECRET = ''
-CONSUMER_KEY = ''
-CONSUMER_SECRET = ''
+## Read in the Twitter and API keys.
+lines = open('../TheKeys.txt').readlines()
+for line in lines:
+	exec(line)
+
+## This defines:
+	## Twitter API keys
+	## ACCESS_TOKEN
+	## ACCESS_TOKEN_SECRET
+	## CONSUMER_KEY
+	## CONSUMER_SECRET
+	##
+	## Reddit API keys
+	## REDDIT_KEY
+	## REDDIT_SECRET
+	## APP_NAME
+	## MYUSERAGENT
 
 # Place the subreddit you want to look up posts from here
-SUBREDDIT_TO_MONITOR = ''
+SUBREDDIT_TO_MONITOR = 'youbelongwithmemes'
 
 # Place the name of the folder where the images are downloaded
 IMAGE_DIR = 'img'
@@ -43,13 +59,13 @@ IMAGE_DIR = 'img'
 POSTED_CACHE = 'posted_posts.txt'
 
 # Place the string you want to add at the end of your tweets (can be empty)
-TWEET_SUFFIX = ' #dataviz'
+TWEET_SUFFIX = ' #TaylorSwift'
 
 # Place the maximum length for a tweet
-TWEET_MAX_LEN = 140
+TWEET_MAX_LEN = 250
 
 # Place the time you want to wait between each tweets (in seconds)
-DELAY_BETWEEN_TWEETS = 30
+DELAY_BETWEEN_TWEETS = 20
 
 # Place the lengths of t.co links (cf https://dev.twitter.com/overview/t.co)
 T_CO_LINKS_LEN = 24
@@ -57,7 +73,11 @@ T_CO_LINKS_LEN = 24
 def setup_connection_reddit(subreddit):
     ''' Creates a connection to the reddit API. '''
     print('[bot] Setting up connection with reddit')
-    reddit_api = praw.Reddit('reddit Twitter tool monitoring {}'.format(subreddit))
+    ## Added 
+#    reddit_api = praw.Reddit('reddit Twitter tool monitoring {}'.format(subreddit))
+    reddit_api = praw.Reddit(client_id=REDDIT_KEY,
+                     client_secret=REDDIT_SECRET,
+                     user_agent=MYUSERAGENT)
     return reddit_api.get_subreddit(subreddit)
 
 
@@ -75,8 +95,17 @@ def tweet_creator(subreddit_info):
     #
     # "limit" tells the API the maximum number of posts to look up
 
-    for submission in subreddit_info.get_hot(limit=5):
+    indi = 0
+    AllSubs = subreddit_info.get_new(limit=200)
+        ## Insert a switch to accept post iif it has 5 or more upvotes.
+		num_votes = float(str(submission).rsplit('::')[0])
+        EnoughVotes = (num_votes >= 5.)
+        if not EnoughVotes:
+            print('[bot] Not enough upvotes yet for: {}'.format(str(submission)))
+            continue
         if not already_tweeted(submission.id):
+            indi += 1
+     	    if indi == 2: break
             # This stores a link to the reddit post itself
             # If you want to link to what the post is linking to instead, use
             # "submission.url" instead of "submission.permalink"
@@ -87,10 +116,37 @@ def tweet_creator(subreddit_info):
             # Store the url the post points to (if any)
             # If it's an imgur URL, it will later be downloaded and uploaded alongside the tweet
             post['img_path'] = get_image(submission.url)
-
+            
+            ## Check that the file is less than 4.5 MB
+            if float(os.path.getsize(post['img_path'])) > 4500000.:
+            	print('[bot] File too big. Resizing')
+            	Resizer = 0.5
+            	TooBig = True
+            	while(TooBig):
+            	    ## Open file and halve the width/length
+            	    test_img = Image.open(post['img_path'])
+            	    width, height = test_img.size
+            	    width = int(width*Resizer)
+            	    height = int(height*Resizer)
+            	    new_img = test_img.resize((width,height))
+            	    filetype = post['img_path'].rsplit('.')[-1]
+            	    newimg_path = post['img_path'].replace('.','_resized.')
+            	    new_img.save(newimg_path,filetype)
+            	    ## Check if the new image is now small enough.
+            	    if float(os.path.getsize(newimg_path)) > 4500000.:
+            	    	## Not small enough. Resize again.
+            	    	Resizer = Resizer * 0.5
+            	    	print('[bot] First resize not enough. Trying again')
+            	    else:
+            	    	## Image is now small enough.
+            	    	post['img_path'] = newimg_path
+            	    	TooBig = False
+            	    	print '[bot] File reduced in size by', Resizer
             post_ids.append(submission.id)
+            break
         else:
             print('[bot] Already tweeted: {}'.format(str(submission)))
+            continue
 
     return post_dict, post_ids
 
@@ -122,8 +178,10 @@ def strip_title(title, num_characters):
 
 def get_image(img_url):
     ''' Downloads i.imgur.com images that reddit posts may point to. '''
-    if 'imgur.com' in img_url:
-        file_name = os.path.basename(urllib.parse.urlsplit(img_url).path)
+    if 'imgur.com' in img_url or 'i.redd.it' in img_url:
+		## Use urlparse instead of urllib.parse
+#        file_name = os.path.basename(urllib.parse.urlsplit(img_url).path)
+        file_name = os.path.basename(urlsplit(img_url).path)
         img_path = IMAGE_DIR + '/' + file_name
         print('[bot] Downloading image at URL ' + img_url + ' to ' + img_path)
         resp = requests.get(img_url, stream=True)
