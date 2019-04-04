@@ -25,6 +25,7 @@ import tweepy
 import time
 import os
 from PIL import Image
+import moviepy.editor as mp
 
 ## My python 2 doesn't have urllib, so use urlparse.urlsplit instead.
 #import urllib.parse
@@ -78,7 +79,7 @@ def setup_connection_reddit(subreddit):
     reddit_api = praw.Reddit(client_id=REDDIT_KEY,
                      client_secret=REDDIT_SECRET,
                      user_agent=MYUSERAGENT)
-    return reddit_api.get_subreddit(subreddit)
+    return reddit_api.subreddit(subreddit)
 
 
 def tweet_creator(subreddit_info):
@@ -96,10 +97,10 @@ def tweet_creator(subreddit_info):
     # "limit" tells the API the maximum number of posts to look up
 
     indi = 0
-    for submission in subreddit_info.get_new(limit=200):
+    for submission in subreddit_info.new(limit=1000):
         ## Insert a switch to accept post iif it has 5 or more upvotes.
-        num_votes = float(str(submission).rsplit('::')[0])
-        EnoughVotes = (num_votes >= 5.)
+        num_votes = submission.score
+        EnoughVotes = (num_votes >= 10.)
         if not EnoughVotes:
             print('[bot] Not enough upvotes yet for: {}'.format(str(submission)))
             continue
@@ -111,29 +112,53 @@ def tweet_creator(subreddit_info):
             # "submission.url" instead of "submission.permalink"
             post_dict[submission.title] = {}
             post = post_dict[submission.title]
-            post['link'] = submission.permalink
+            post['link'] = 'reddit.com'+submission.permalink
 
             # Store the url the post points to (if any)
             # If it's an imgur URL, it will later be downloaded and uploaded alongside the tweet
+            print '[bot] Trying to post: ID',submission.id, '    {}'.format(str(submission))
             post['img_path'] = get_image(submission.url)
-            
-            ## Check that the file is less than 4.5 MB
-            if float(os.path.getsize(post['img_path'])) > 4500000.:
+
+            ## If there is no image or no file extension, continue
+            if post['img_path'] == '' or '.' not in post['img_path']:
+                log_tweet(submission.id)
+                indi = indi - 1
+                continue
+
+            if '.mp4' in post['img_path'] or '.gif' in post['img_path']: SZ = 4500000.
+            else: SZ = 4500000.
+
+            ## Check that the file is less than 3.0 MB
+            if float(os.path.getsize(post['img_path'])) > 3000000.:
             	print('[bot] File too big. Resizing')
-            	Resizer = 0.5
+            	Resizer = 0.7
             	TooBig = True
             	while(TooBig):
-            	    ## Open file and halve the width/length
-            	    test_img = Image.open(post['img_path'])
+            	    ## Open file and halve the width/length. Use mp
+                    ## if this is a video file, Image otherwise.
+                    if '.mp4' in post['img_path']:
+                        print '[bot] File is .mp4. Using moviepy'
+                        test_img = mp.VideoFileClip(post['img_path'])
+                    else: test_img = Image.open(post['img_path'])
+
             	    width, height = test_img.size
             	    width = int(width*Resizer)
             	    height = int(height*Resizer)
-            	    new_img = test_img.resize((width,height))
-            	    filetype = post['img_path'].rsplit('.')[-1]
-            	    newimg_path = post['img_path'].replace('.','_resized.')
-            	    new_img.save(newimg_path,filetype)
+                    new_img = test_img.resize((width,height))
+                    newimg_path = post['img_path'].replace('.','_resized.')
+
+                    print post['img_path']
+                    if '.mp4' in post['img_path'] or '.gif' in post['img_path']:
+                        newimg_path = newimg_path.replace('.mp4','.gif')
+                        #new_img.write_gif(newimg_path)
+                        new_img.save(newimg_path, optimize=True, quality=85, save_all=True)
+                    else:
+            	        filetype = str(post['img_path'].rsplit('.')[-1])
+            	        new_img.save(newimg_path)
+
+                    print newimg_path, float(os.path.getsize(newimg_path)), SZ, float(os.path.getsize(newimg_path)) > SZ
             	    ## Check if the new image is now small enough.
-            	    if float(os.path.getsize(newimg_path)) > 4500000.:
+            	    if float(os.path.getsize(newimg_path)) > SZ:
             	    	## Not small enough. Resize again.
             	    	Resizer = Resizer * 0.5
             	    	print('[bot] First resize not enough. Trying again')
@@ -216,7 +241,11 @@ def tweeter(post_dict, post_ids):
         print(post_text)
         if img_path:
             print('[bot] With image ' + img_path)
-            api.update_with_media(filename=img_path, status=post_text)
+            if '.gif' in img_path:
+                print img_path
+                upload_result = api.media_upload(img_path)
+                api.update_status(status=post_text, media_ids=[upload_result.media_id_string])
+            else: api.update_with_media(filename=img_path, status=post_text)
         else:
             api.update_status(status=post_text)
         log_tweet(post_id)
@@ -241,6 +270,8 @@ def main():
 
     subreddit = setup_connection_reddit(SUBREDDIT_TO_MONITOR)
     post_dict, post_ids = tweet_creator(subreddit)
+#    print post_dict, post_ids
+#    quit()
     tweeter(post_dict, post_ids)
 
     # Clean out the image cache
